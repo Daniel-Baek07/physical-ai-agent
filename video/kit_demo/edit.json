@@ -1,0 +1,26 @@
+{
+  "title": "kit demo",
+  "look": {"grain": true},
+  "timeline": [
+    {"src": "proxies/cell1photo.jpg", "in": 0, "out": 2.6, "fit": "blur", "drift": 0.08},
+    {"src": "proxies/new_plate_broll_vertical.mp4", "in": 0, "out": 2.3, "enter": "whip",
+     "punch": [{"at": 1.0, "dur": 0.7, "scale": 1.4, "x": 0.5, "y": 0.45}]},
+    {"src": "proxies/cell_x11_grid443.mp4", "in": 0, "out": 2.8, "speed": 1, "enter": "zoom"},
+    {"src": "proxies/new_plate_broll_vertical.mp4", "freeze": 1.5, "hold": 2.0, "enter": "flash"},
+    {"src": "proxies/cell1photo.jpg", "in": 0, "out": 2.2, "fit": "cover", "enter": "glitch", "zoom": 1.1}
+  ],
+  "overlays": [
+    {"type": "progress"},
+    {"type": "hook", "start": 0.1, "end": 2.5, "text": "I taught a keyboard to type 618 WPM", "highlight": ["618"]},
+    {"type": "captions", "words": [
+      {"t": 2.7, "text": "every"}, {"t": 2.95, "text": "key"}, {"t": 3.15, "text": "has"}, {"t": 3.3, "text": "its"},
+      {"t": 3.45, "text": "own"}, {"t": 3.7, "text": "solenoid.", "end": 4.6}]},
+    {"type": "counter", "start": 4.9, "end": 7.7, "from": 0, "to": 8540, "label": "KEYSTROKES"},
+    {"type": "speed", "start": 4.9, "end": 7.7, "text": "8×"},
+    {"type": "vs", "start": 5.2, "end": 7.6, "left": "Human", "right": "Claude"},
+    {"type": "callout", "start": 7.8, "end": 9.6, "text": "84 solenoids", "x": 0.5, "y": 0.55, "arrow": "up"},
+    {"type": "image", "start": 9.75, "end": 11.4, "src": "proxies/new_plate_exploded_still_labeled.png", "y": 0.42},
+    {"type": "badge", "start": 10.0, "end": 11.4, "text": "it melted a chip", "y": 0.72},
+    {"type": "endcard", "start": 10.4, "end": 11.9, "text": "what should it play next?", "sub": "comment below"}
+  ]
+}

@@ -55,7 +55,8 @@
       <button id="mtr-connect">Connect</button>
       <button id="mtr-setup-send">Send setup</button>
       <button id="mtr-go" style="background:#2a5;color:#fff">Arm &amp; Go</button>
-      <button id="mtr-stop" style="background:#c33;color:#fff">STOP</button></div>
+      <button id="mtr-stop" style="background:#c33;color:#fff">STOP</button>
+      <button id="mtr-release" title="free the port for Tetris">Release</button></div>
     <label style="color:#888">setup (sent after every connect, one cmd per line)</label>
     <textarea id="mtr-setup" rows="4" style="width:100%;box-sizing:border-box;background:#000;color:#ddd;border:1px solid #444;font:inherit"></textarea>
     <div style="display:flex;gap:4px;margin:4px 0">
@@ -139,7 +140,8 @@
   async function connect() {
     try {
       if (st.port) await disconnect();
-      st.port = window.MTR_FAKE ? makeFakePort() : await navigator.serial.requestPort();
+      if (window.MTR_FAKE) st.port = makeFakePort();
+      else st.port = (await navigator.serial.getPorts())[0] || await navigator.serial.requestPort();
       await st.port.open({ baudRate: 115200 });
       st.writer = st.port.writable.getWriter();
       st.connected = true; setDot(true);
@@ -228,11 +230,15 @@
 
   // ---------------- run control ----------------
   async function armAndGo() {
-    if (!st.connected) { log('Connect first', '#f66'); return; }
     if (st.running) { log('already running — STOP first', '#f66'); return; }
     if (testFinished() || testStarted()) {
       log('Test not fresh: click the page, press Tab then Enter (or Esc) to restart, then Arm again.', '#f66');
       return;
+    }
+    if (!st.connected) {                      // demo switcher: grab the port only when needed
+      log('connecting (Mega resets, ~3 s)…');
+      await connect();
+      if (!st.connected) { log('could not open the port — is Tetris still running?', '#f66'); return; }
     }
     await writeLine('STOP'); await nextLine(800);
     Object.assign(st, { outbox: '', lastSentIdx: -1, sentChars: 0, keydowns: 0, badChars: 0, free: 1024, waitingAck: false });
@@ -255,6 +261,16 @@
     st.outbox = '';
     if (was) log('STOP (' + why + ')', '#fa0');
     if (st.connected) await writeLine('STOP');
+    if (was && st.connected && !window.MTR_FAKE) {   // demo switcher: free the port for Tetris
+      await nextLine(1200);
+      await release();
+    }
+  }
+
+  async function release() {
+    if (!st.connected) return;
+    await disconnect();
+    log('port released — Tetris can run now', '#888');
   }
 
   function focusTest() {
@@ -296,6 +312,7 @@
   $('mtr-setup-send').onclick = sendSetup;
   $('mtr-go').onclick = armAndGo;
   $('mtr-stop').onclick = () => stop('button');
+  $('mtr-release').onclick = release;
   $('mtr-cmd').addEventListener('keydown', async (e) => {
     e.stopPropagation();                         // keep Monkeytype from seeing these keys
     if (e.key === 'Enter') { const v = e.target.value.trim(); if (v) { log('> ' + v, '#888'); await writeLine(v); } e.target.value = ''; }

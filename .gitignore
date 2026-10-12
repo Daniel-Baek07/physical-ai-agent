@@ -4,3 +4,11 @@ __pycache__/
 agent/logs/
 agent/calibration/
 .DS_Store
+
+# video kit: big media stays out of git
+video/kit/node_modules/
+video/*/clips/
+video/*/proxies/
+video/*/renders/
+video/*/_ingest/
+video/*/_kit/

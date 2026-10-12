@@ -1035,3 +1035,23 @@ Buy/check: 18 AWG for 5 PSU runs + 3 J70 stubs; small flat driver for terminals.
 - **Mac setup facts:** API key now saved in `~/.zshrc` (no per-window export). zsh does not treat `#` as a comment interactively (an inline comment broke an export). Pasting sometimes inserts `[200~` (bracketed-paste garbage after a curses app) → `reset` or new window, paste one line at a time. pygame game window often opens BEHIND the Terminal → Cmd-Tab → Python before clicking (robot keys go to the focused window).
 - **Rematches without retyping:** `python3 play.py --game runs/<stamp>/tetris.py`.
 - **Next:** confirm the filmed take (typed-and-verified line) → film gameplay rounds → edit + post → freeze rig Sun night → Dean demo Mon Oct 12 2pm. **Git: commit + push** (`rm -f .git/index.lock` first).
+
+### October 7, 2026 (Opus, ~11:45pm) — filmed typing take partial; b-roll list for Video 2
+- **Filmed take:** Daniel recorded about half of the robot typing `runs/20261007-225806/claude_game.py` and stopped there, to protect the rig before the Dean demo. It gets sped up anyway, so a partial take is fine. No verified typed `tetris.py` exists from it (the newest run folders hold only `claude_game.py`), so the "game launches from the typed file" moment was never filmed. Plan: cut from the sped-up typing straight to `python3 play.py --game runs/20261007-225806/claude_game.py` opening.
+- **B-roll list given** (brief 10 outline): voice line, game launch, gameplay rounds + keyboard close-ups + face reactions, comment screenshot, the melted ULN (optional). Keep the robot's run time low before Mon Oct 12: gameplay through `--game` only, no more full typing passes.
+- **Next:** film the gameplay rounds → edit → post → freeze the rig Sun night → Dean demo Mon 2pm. **Git: commit + push.**
+
+### October 8, 2026 (Opus, ~12am) — ★ VIDEO EDIT KIT BUILT (`video/kit/`)
+- **Goal:** Daniel drops clips, says what he wants, Claude edits + adds motion design → finished 9:16 MP4. Chosen: finished MP4 (not a timeline for an editor), vertical shorts, build now on the Tetris video.
+- **No editing connector fits** (registry has HyperFrames/Adobe for graphics, nothing that cuts his footage). Built a code pipeline instead: **Remotion 4.0.534 (React motion graphics) + ffmpeg**, driven by one `edit.json` per video. Spec + workflow: `video/kit/README.md`. Skill `edit-short` proposed.
+- **Components:** hook slam (highlighted word), word-pop captions, keystroke/WPM counter, speed tag, HUMAN vs CLAUDE banner, callout (circle+arrow+label), image card (comment screenshots), chapter title, end card, flash, progress bar; transitions cut/zoom/whip/flash/glitch; punch-in zooms, freeze frames, Ken-Burns drift, blurred-fill for landscape clips, color grades, grain/vignette; synthesized SFX (pop/hit/impact/whoosh/glitch/riser/key) auto-placed. Theme in `src/theme.ts` (accent "12V orange" #FF5A1F).
+- **Where things run:** proxies on the Mac side (`bin/proxy.sh`); ingest (contact sheets + loud/quiet spans) and rendering in the cloud workspace (it has headless Chromium; Mac-side VM can't download one). Fonts via @fontsource (Google Fonts blocked). **No transcription** — Whisper models blocked in both workspaces → captions written from Daniel's description.
+- **Verified:** tsc clean; demo render from old media (`video/kit_demo/`), frames checked; one overlap fixed (counter/speed tag moved below the VS banner).
+- **Housekeeping:** `.gitignore` now excludes clips/proxies/renders/_ingest/_kit + kit node_modules. Stray `video/_incoming/video_kit.tgz` and a stale `video/kit/node_modules` (old install) can be deleted.
+- **Next:** Daniel drops Tetris clips in `video/tetris_vs/clips/` + the 698-like comment screenshot → first real edit. **Git: commit + push** (`rm -f .git/index.lock` first).
+
+### October 10, 2026 (Opus, 6pm) — demo switcher for the Dean demo (Mon Oct 12)
+- **`demo.command`** (repo root, double-clickable): menu, T = Tetris (`play.py --game runs/20261007-225806/claude_game.py`, venv auto-activated; `TETRIS_GAME` env overrides), M = opens monkeytype.com + reminder steps, Q = quit. Shows whether the Mega is plugged in.
+- **`mt_reader.js`:** Arm & Go now connects by itself (`getPorts()` first, so no port chooser after the first time) and **releases the port when the test ends or STOP is pressed**; new **Release** button. So the port is free whenever Monkeytype isn't typing, and Tetris's robot retries a busy port for 15 s anyway.
+- **Must do:** re-paste the new `mt_reader.js` into the Chrome Snippet (the old copy is still saved there).
+- **UNVERIFIED:** the whole switch on the real Mac (Web Serial release → pyserial open). Rehearse T → M → T → M once before freezing the rig.
