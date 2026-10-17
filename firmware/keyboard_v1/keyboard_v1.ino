@@ -52,8 +52,12 @@
 //   FAST-TYPE / STREAM (Oct 3 2026, brief 09 -- the 320 WPM Monkeytype path):
 //   Non-blocking, schedule-based. A new key-down every 12000/WPM ms; each coil
 //   ON for FPULSE ms; pulses of DIFFERENT keys overlap; the SAME key waits
-//   SAMEKEY ms start-to-start (measured Oct 3: 45 ms). Lowercase + space only
-//   (no shift in stream). Unmapped chars keep their time slot but fire nothing
+//   SAMEKEY ms start-to-start (measured Oct 3: 45 ms).
+//   SHIFT CHORDS (Oct 16 2026, Nitro Type): capitals + shifted symbols hold
+//   LShift: Shift down >= SHIFTSEAT ms before the key, held across runs of
+//   shifted chars, released after the last shifted pulse ends; the next plain
+//   key waits SHIFTREL ms for Shift to rise. Unmapped chars (or shifted chars
+//   with LShift unmapped -> noshift=) keep their time slot but fire nothing
 //   (so one mapped coil can be tested: FAST jajaja).
 //   Q <text>                append text VERBATIM to the stream queue (1024 B);
 //                           replies "K <free bytes>" (host waits for K = flow ctl)
@@ -64,9 +68,10 @@
 //   WPM [n]                 schedule speed (default 330 = 36.4 ms/char)
 //   FPULSE [ms]             stream pulse (default 20, measured Oct 3)
 //   SAMEKEY [ms]            same-coil start-to-start minimum (default 45)
-//   While a stream runs only Q/END/STOP/ALLOFF/STATUS/WPM/FPULSE/SAMEKEY are
+//   SHIFTMS [seat [rise]]   Shift seat-before-key / rise-after-release ms (30 30)
+//   While a stream runs only Q/END/STOP/ALLOFF/STATUS/WPM/FPULSE/SAMEKEY/SHIFTMS are
 //   accepted (everything else blocks and would wreck the timing -> ERR busy).
-//   Finish prints:  DONE slots=.. fired=.. skipped=.. shift=.. same=..
+//   Finish prints:  DONE slots=.. fired=.. skipped=.. shift=(chords) noshift=.. same=..
 //                   under=.. lateMax=..us ms=.. wpm=..
 //   STATUS                  pulse, lead, mapped count, held channels, fire count
 //   ALLOFF                  force every channel low
@@ -506,12 +511,22 @@ bool     sEnded = false, sStarved = false;
 uint32_t sLeadEndMs = 0, sStartMs = 0, sStarveMs = 0;
 uint32_t sNextDueUs = 0, sPrevStartUs = 0, sFirstUs = 0, sLastUs = 0;
 uint32_t sChStartUs[NUM_CHANNELS];               // last key-down per coil (this run)
-int8_t   sLut[128];                              // char -> ch; -1 unmapped, -2 needs shift
+int8_t   sLut[128];                              // char -> base-key ch; -1 unmapped
+uint8_t  sNeedShift[16];                         // bitmap: char needs LShift held (Oct 16)
+inline bool needShift(uint8_t c) { return sNeedShift[c >> 3] & (1 << (c & 7)); }
+// Shift chords in the stream (Oct 16, Nitro Type: capitals + punctuation).
+// LShift goes down >= SHIFTSEAT before the shifted key fires, stays down across
+// consecutive shifted chars, and comes up only after the last shifted pulse has
+// ended; the next unshifted key then waits SHIFTREL for the Shift key to rise.
+int8_t   sShiftCh = -1;
+bool     sShiftDown = false;
+uint32_t sShiftDownUs = 0, sShiftUpUs = 0, sShiftHoldUntilUs = 0;
+uint16_t sShiftSeatMs = 30, sShiftRelMs = 30;
 struct ActivePulse { uint8_t ch; uint32_t offUs; };
 ActivePulse sAct[MAX_ON];
 uint8_t  sNAct = 0;
 // stats
-uint16_t stSlots, stFired, stSkipped, stShift, stSame, stUnder;
+uint16_t stSlots, stFired, stSkipped, stShift, stNoShift, stSame, stUnder;
 uint32_t stLateMaxUs;
 
 inline bool usAfter(uint32_t a, uint32_t b) { return (int32_t)(a - b) > 0; }  // a later than b
@@ -524,14 +539,20 @@ void streamSetWpm(int w) {
 }
 
 void buildLut() {
+  sShiftCh = (int8_t)channelForKeyName("LShift");
   for (uint8_t c = 0; c < 128; c++) {
     sLut[c] = -1;
+    sNeedShift[c >> 3] &= ~(1 << (c & 7));
     if (c < 0x20 || c > 0x7E) continue;
     int8_t ki; bool shift;
     if (!asciiToKey((char)c, ki, shift)) continue;
-    if (shift) { sLut[c] = -2; continue; }
     int ch = channelForKeyIndex(ki);
-    if (ch >= 0) sLut[c] = (int8_t)ch;
+    if (ch < 0) continue;
+    if (shift) {
+      if (sShiftCh < 0) { sLut[c] = -2; continue; }   // LShift unmapped: silent slot
+      sNeedShift[c >> 3] |= (1 << (c & 7));
+    }
+    sLut[c] = (int8_t)ch;
   }
 }
 
@@ -550,7 +571,9 @@ void streamGo() {
   uint32_t now = micros();
   for (uint8_t i = 0; i < NUM_CHANNELS; i++) sChStartUs[i] = now - 10000000UL;
   sPrevStartUs = now - 10000000UL;
-  stSlots = stFired = stSkipped = stShift = stSame = stUnder = 0;
+  stSlots = stFired = stSkipped = stShift = stNoShift = stSame = stUnder = 0;
+  sShiftDown = false;
+  sShiftUpUs = sShiftHoldUntilUs = now - 10000000UL;
   stLateMaxUs = 0;
   sNAct = 0;
   sStarved = false;
@@ -561,6 +584,8 @@ void streamGo() {
   Serial.print(F(" ms  wpm=")); Serial.print(sWpm);
   Serial.print(F(" pulse=")); Serial.print(sPulseMs);
   Serial.print(F(" same=")); Serial.print(sSameMs);
+  Serial.print(F(" shiftms=")); Serial.print(sShiftSeatMs); Serial.print('/'); Serial.print(sShiftRelMs);
+  Serial.print(F(" lshift=")); Serial.print(sShiftCh);
   Serial.print(F(" queued=")); Serial.println(sqCount());
 }
 
@@ -571,6 +596,11 @@ void streamFinish(const __FlashStringHelper* why) {
     lastFireEnd[sAct[i].ch] = millis();
   }
   sNAct = 0;
+  if (sShiftDown && sShiftCh >= 0) {                // never leave Shift held
+    shadow[sShiftCh >> 3] &= ~(1 << (sShiftCh & 7));
+    lastFireEnd[sShiftCh] = millis();
+    sShiftDown = false;
+  }
   writeShadow();
   lastFireEndMs = millis();
   sState = S_IDLE;
@@ -581,6 +611,7 @@ void streamFinish(const __FlashStringHelper* why) {
   Serial.print(F(" fired=")); Serial.print(stFired);
   Serial.print(F(" skipped=")); Serial.print(stSkipped);
   Serial.print(F(" shift=")); Serial.print(stShift);
+  Serial.print(F(" noshift=")); Serial.print(stNoShift);
   Serial.print(F(" same=")); Serial.print(stSame);
   Serial.print(F(" under=")); Serial.print(stUnder);
   Serial.print(F(" lateMax=")); Serial.print(stLateMaxUs);
@@ -637,47 +668,95 @@ void streamService() {
   // 2) next char
   if (sqCount() > 0) {
     if (sStarved) { sStarved = false; sNextDueUs = now; }   // restart timeline after underrun
-    char c = sq[sqHead & SQ_MASK];
-    int8_t ch = ((uint8_t)c < 128) ? sLut[(uint8_t)c] : -1;
+    uint8_t c = (uint8_t)sq[sqHead & SQ_MASK];
+    int8_t ch = (c < 128) ? sLut[c] : -1;
     if (ch < 0) {                                          // silent slot
       if (!usAfter(sNextDueUs, now)) {
         sqHead++;
-        if (ch == -2) stShift++; else stSkipped++;
+        if (ch == -2) stNoShift++; else stSkipped++;
         slotDone(now);
       }
     } else {
+      bool wantShift = needShift(c);
       uint32_t due = sNextDueUs;
-      bool sameHit = false;
-      uint32_t t = sPrevStartUs + STREAM_STAGGER_US;
-      if (usAfter(t, due)) due = t;
-      t = sChStartUs[ch] + (uint32_t)sSameMs * 1000UL;
-      if (usAfter(t, due)) { due = t; sameHit = true; }
-      bool coilBusy = channelIsOn((uint8_t)ch);            // still on (or HELD)
-      if (!usAfter(due, now) && !coilBusy && sNAct < MAX_ON && countOn() < MAX_ON) {
-        shadow[ch >> 3] |= (1 << (ch & 7));
-        dirty = true;
-        sAct[sNAct].ch = (uint8_t)ch;
-        sAct[sNAct].offUs = now + (uint32_t)sPulseMs * 1000UL;
-        sNAct++;
-        sqHead++;
-        uint32_t late = now - due;
-        if (late > stLateMaxUs) stLateMaxUs = late;
-        if (sameHit) stSame++;
-        stFired++;
-        sChStartUs[ch] = now;
-        sPrevStartUs = now;
-        slotDone(now);
+      bool sameHit = false, ready = true;
+
+      if (wantShift && !sShiftDown) {
+        // press LShift first: not before (char's slot - seat), not within SEAT of the
+        // previous key-down (a late-actuating key must not be capitalised), and only
+        // once the Shift coil itself has recovered (SAMEKEY).
+        uint32_t seatUs = (uint32_t)sShiftSeatMs * 1000UL;
+        uint32_t sDue = due - seatUs;
+        uint32_t t = sPrevStartUs + seatUs;
+        if (usAfter(t, sDue)) sDue = t;
+        t = sChStartUs[sShiftCh] + (uint32_t)sSameMs * 1000UL;
+        if (usAfter(t, sDue)) sDue = t;
+        if (!usAfter(sDue, now) && !channelIsOn((uint8_t)sShiftCh) && countOn() < MAX_ON) {
+          shadow[sShiftCh >> 3] |= (1 << (sShiftCh & 7));
+          dirty = true;
+          sShiftDown = true;
+          sShiftDownUs = now;
+          sChStartUs[sShiftCh] = now;
+          stShift++;
+        }
+        ready = false;                                     // char fires on a later pass
+      } else if (!wantShift && sShiftDown) {
+        // release LShift once the last shifted key's pulse has ended
+        if (!usAfter(sShiftHoldUntilUs, now)) {
+          shadow[sShiftCh >> 3] &= ~(1 << (sShiftCh & 7));
+          dirty = true;
+          sShiftDown = false;
+          sShiftUpUs = now;
+          lastFireEnd[sShiftCh] = nowMs;
+          fireCount++;
+        }
+        ready = false;
+      }
+
+      if (ready) {
+        uint32_t t = sPrevStartUs + STREAM_STAGGER_US;
+        if (usAfter(t, due)) due = t;
+        t = sChStartUs[ch] + (uint32_t)sSameMs * 1000UL;
+        if (usAfter(t, due)) { due = t; sameHit = true; }
+        if (wantShift) t = sShiftDownUs + (uint32_t)sShiftSeatMs * 1000UL;   // Shift seated
+        else           t = sShiftUpUs   + (uint32_t)sShiftRelMs  * 1000UL;   // Shift risen
+        if (usAfter(t, due)) due = t;
+        bool coilBusy = channelIsOn((uint8_t)ch);            // still on (or HELD)
+        if (!usAfter(due, now) && !coilBusy && sNAct < MAX_ON && countOn() < MAX_ON) {
+          shadow[ch >> 3] |= (1 << (ch & 7));
+          dirty = true;
+          sAct[sNAct].ch = (uint8_t)ch;
+          sAct[sNAct].offUs = now + (uint32_t)sPulseMs * 1000UL;
+          if (wantShift) sShiftHoldUntilUs = sAct[sNAct].offUs;
+          sNAct++;
+          sqHead++;
+          uint32_t late = now - due;
+          if (late > stLateMaxUs) stLateMaxUs = late;
+          if (sameHit) stSame++;
+          stFired++;
+          sChStartUs[ch] = now;
+          sPrevStartUs = now;
+          slotDone(now);
+        }
       }
     }
   } else if (sState == S_RUN) {
-    // 3) nothing queued
+    // 3) nothing queued: let go of Shift as soon as its last key is done
+    if (sShiftDown && !usAfter(sShiftHoldUntilUs, now)) {
+      shadow[sShiftCh >> 3] &= ~(1 << (sShiftCh & 7));
+      dirty = true;
+      sShiftDown = false;
+      sShiftUpUs = now;
+      lastFireEnd[sShiftCh] = nowMs;
+      fireCount++;
+    }
     if (!sStarved && !usAfter(sNextDueUs, now)) {
       sStarved = true;
       sStarveMs = nowMs;
       if (stSlots > 0 && !sEnded) stUnder++;
     }
     if (dirty) { writeShadow(); dirty = false; }
-    if (sNAct == 0) {
+    if (sNAct == 0 && !sShiftDown) {
       if (sEnded) { streamFinish(F("end")); return; }
       if (sStarved && nowMs - sStarveMs > STREAM_STARVE_TIMEOUT_MS) {
         streamFinish(F("timeout")); return;
@@ -765,6 +844,15 @@ bool handleStreamLine(char* line) {
       sPulseMs = (uint16_t)ms;
     }
     Serial.print(F("FPULSE ")); Serial.println(sPulseMs);
+    return true;
+  }
+  if (isCmd(line, "SHIFTMS")) {                       // SHIFTMS [seat [rise]]
+    int a = -1, b = -1;
+    int n = sscanf(line + 7, "%d %d", &a, &b);
+    if (n >= 1 && a >= 0) sShiftSeatMs = (uint16_t)(a > 150 ? 150 : a);
+    if (n >= 2 && b >= 0) sShiftRelMs  = (uint16_t)(b > 150 ? 150 : b);
+    Serial.print(F("SHIFTMS ")); Serial.print(sShiftSeatMs);
+    Serial.print(' '); Serial.println(sShiftRelMs);
     return true;
   }
   if (isCmd(line, "SAMEKEY")) {
@@ -927,7 +1015,7 @@ void setup() {
   Serial.print(F(" pulse=")); Serial.print(defaultPulseMs);
   Serial.print(F("ms map=")); Serial.println(loaded ? F("EEPROM") : F("empty"));
   Serial.println(F("cmds: FIRE PULSE WALK TYPE KEY CHORD HOLD RELEASE MAP SAVE LOAD LEAD REPEAT STATUS ALLOFF"));
-  Serial.println(F("fast: Q GO END FAST STOP WPM FPULSE SAMEKEY"));
+  Serial.println(F("fast: Q GO END FAST STOP WPM FPULSE SAMEKEY SHIFTMS"));
 }
 
 // Oct 5 2026 safety net: noise on CLK/LATCH can latch random coils ON and,
